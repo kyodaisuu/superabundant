@@ -261,7 +261,7 @@ $ python superabundant.py 40
 The program prints:
 
 ```
-Searching for superabundant numbers up to 10^16 = 10000000000000000
+Searching for superabundant numbers up to 10^40 = 10000000000000000000000000000000000000000
 ```
 
 followed by the detected superabundant numbers and their factorizations.
