@@ -293,6 +293,10 @@ The number of structurally possible candidates grows as the bound increases, and
 
 The implementation is therefore intended primarily as a computational exploration of superabundant numbers and the structural results of Alaoglu and Erdős, rather than as an asymptotically optimal algorithm for computing arbitrarily large superabundant numbers.
 
+## Result
+
+Result for calculating up to 10^100 is saved at `result-100.txt`.
+
 ## Reference
 
 Alaoglu, L. and Erdős, P. (1944). "On Highly Composite and Similar Numbers." Transactions of the American Mathematical Society, 56, 448–469.
