@@ -7,97 +7,197 @@ Trans. Amer. Math. Soc. 56, 448-469.
 A number n is superabundant if sigma(m)/m < sigma(n)/n for all 0 < m < n,
 where sigma(n) is the sum of divisors of n.
 
-Theorem 1 (Alaoglu-Erdos): if n = 2^k2 * 3^k3 * 5^k5 * ... * p^kp is
-superabundant, then k2 >= k3 >= k5 >= ... >= kp. In particular a
-superabundant number only ever uses the first k primes (2, 3, 5, ..., p_k)
-with no gaps, and the exponents are non-increasing as the prime grows.
+Theorem 1 (Alaoglu-Erdos):
+If
 
-Theorem 2 (Alaoglu-Erdos): let q < r be primes, both possibly dividing a
-superabundant number n, with k_q the exponent of q in n. Set
-beta = floor(k_q * log(q) / log(r)). Then the exponent k_r of r in n is
-one of beta - 1, beta, beta + 1.
+    n = 2^a1 * 3^a2 * 5^a3 * ... * p_k^ak
 
-Theorem 3 (Alaoglu-Erdos): if p is the largest prime factor of a
-superabundant number n, then the exponent of p is 1, except for n = 4
-and n = 36.
+is superabundant, then
 
-Instead of testing every integer up to a bound N (which is only feasible
-for N as large as roughly 10^16 with a naive sieve-and-factor approach),
-we use Theorem 1 to restrict the search to non-increasing exponent
-sequences (a_1 >= a_2 >= ... >= a_k >= 1) applied to the first k primes,
-Theorem 2 to narrow, at every step, the exponent of each new prime down
-to at most three candidate values (instead of the full range allowed by
-Theorem 1 alone), and Theorem 3 to discard, along the way, candidates
-whose top exponent already violates the theorem. Theorem 2 is applied
-with q fixed as the prime 2: once a1 (the exponent of 2) is chosen at
-the top of the search, it anchors a tight predicted exponent for every
-later prime, which turns what would otherwise be a search branching
-factor of "up to the previous exponent" into a branching factor of "at
-most 3" at every step. This is the same reduction that let Alaoglu and
-Erdos build their own table of superabundant numbers up to 10^18 by
-hand in 1944, and it lets this program comfortably reach far larger
-bounds than Theorem 1 alone would allow, while still working with
-arbitrary-precision Python integers so N can be as large as 10^n for
-any n.
+    a1 >= a2 >= a3 >= ... >= ak >= 1.
 
-Usage:
-    python superabundant.py 16      # search up to 10^16 (default: 16)
+In particular, a superabundant number uses consecutive primes starting
+from 2, with non-increasing exponents.
+
+Theorem 2 (Alaoglu-Erdos):
+Let q < r be primes, and let a_q and a_r be their exponents in a
+superabundant number. Set
+
+    beta = floor(a_q * log(q) / log(r)).
+
+Then
+
+    a_r in {beta - 1, beta, beta + 1}.
+
+This implementation applies Theorem 2 for every previously selected
+prime q < r, not just q = 2. The possible exponents for r are therefore
+restricted to the intersection of all such three-element sets, together
+with the non-increasing-exponent constraint from Theorem 1.
+
+Theorem 3 (Alaoglu-Erdos):
+If p is the largest prime factor of a superabundant number, then the
+exponent of p is 1, except for n = 4 and n = 36.
+
+Theorem 3 is used to exclude candidates from the final list during the
+search. However, the recursion is continued from such candidates,
+because adding a new prime factor with exponent 1 can produce a number
+whose largest prime exponent satisfies Theorem 3.
+
+The final identification of superabundant numbers is performed by
+sorting all surviving candidates by n and retaining those for which
+sigma(n)/n is a new record.
+
+All comparisons of sigma(n)/n use exact integer cross multiplication.
 """
 
+import math
 import sys
 
 
 def sieve_primes(limit):
-    """Return the list of primes <= limit using a simple sieve of Eratosthenes."""
+    """Return the list of primes <= limit using a sieve of Eratosthenes."""
     is_prime = bytearray([1]) * (limit + 1)
     is_prime[0:2] = b"\x00\x00"
+
     for i in range(2, int(limit ** 0.5) + 1):
         if is_prime[i]:
-            is_prime[i * i : limit + 1 : i] = bytearray(len(range(i * i, limit + 1, i)))
+            is_prime[
+                i * i : limit + 1 : i
+            ] = bytearray(len(range(i * i, limit + 1, i)))
+
     return [i for i, flag in enumerate(is_prime) if flag]
 
 
 def enough_primes(N):
     """
-    Return a list of primes 2, 3, 5, ... long enough that we never run out
-    of primes while enumerating candidates for a search bound N.
+    Return enough consecutive primes to enumerate every candidate <= N
+    allowed by Theorem 1.
 
-    The key fact used here is that, among all non-increasing exponent
-    sequences with product <= N, the sequence that uses the *most*
-    distinct primes is the all-ones sequence 2*3*5*7*...*p_k (the
-    primorial). Any sequence with a larger exponent on an earlier prime
-    only uses up the budget faster and therefore needs fewer, not more,
-    distinct primes to stay under N. So it suffices to keep adding primes
-    until their running product (the primorial) first exceeds N.
+    The maximum possible number of distinct prime factors is obtained
+    when every exponent is 1, giving the primorial
+
+        2 * 3 * 5 * 7 * ...
+
+    We therefore generate primes until the primorial first exceeds N.
     """
     limit = 100
+
     while True:
         primes = sieve_primes(limit)
         product = 1
+
         for count, p in enumerate(primes, start=1):
             product *= p
+
             if product > N:
                 return primes[:count]
-        # Our sieve limit did not contain enough primes yet; grow it and retry.
+
         limit *= 2
 
 
-def floor_log(base, value):
+def floor_log_ratio(a, q, r):
     """
-    Return floor(log_base(value)) computed exactly, for integers base > 1
-    and value >= 1.
+    Return floor(a * log(q) / log(r)) exactly.
 
-    We start from a fast floating-point estimate and then correct it with
-    exact integer power comparisons, so the result is always exactly
-    right (never off by one due to floating-point rounding) while still
-    being fast even when 'value' is a very large integer.
+    This is equivalent to finding the largest integer k such that
+
+        r^k <= q^a.
+
+    A floating-point estimate is used as a starting point, then corrected
+    using exact integer comparisons.
+
+    Parameters
+    ----------
+    a : int
+        Exponent of q.
+    q : int
+        Smaller prime.
+    r : int
+        Larger prime.
     """
-    est = int(math.log(value) / math.log(base))
-    while base ** est > value:
-        est -= 1
-    while base ** (est + 1) <= value:
-        est += 1
-    return est
+    if a < 0:
+        raise ValueError("a must be non-negative.")
+
+    if q <= 1 or r <= 1:
+        raise ValueError("q and r must be greater than 1.")
+
+    if q >= r:
+        raise ValueError("q must be smaller than r.")
+
+    if a == 0:
+        return 0
+
+    # Initial floating-point estimate.
+    estimate = int(a * math.log(q) / math.log(r))
+
+    # Exact correction.
+    # We need the largest k satisfying r^k <= q^a.
+    q_power = q ** a
+
+    while estimate > 0 and r ** estimate > q_power:
+        estimate -= 1
+
+    while r ** (estimate + 1) <= q_power:
+        estimate += 1
+
+    return estimate
+
+
+def theorem2_exponent_candidates(exponents, primes, r_index):
+    """
+    Return the possible exponent values for primes[r_index] according
+    to Theorem 2 applied to every previously selected prime.
+
+    If the exponent of q is a_q, Theorem 2 gives
+
+        a_r in {
+            beta - 1,
+            beta,
+            beta + 1
+        }
+
+    where
+
+        beta = floor(a_q * log(q) / log(r)).
+
+    The possible values from all q < r are intersected.
+
+    Theorem 1 is not applied here; its constraint
+    a_r <= a_(r-1) is imposed separately by the caller.
+    """
+    r = primes[r_index]
+
+    possible = None
+
+    for q_index in range(r_index):
+        q = primes[q_index]
+        a_q = exponents[q_index]
+
+        beta = floor_log_ratio(a_q, q, r)
+
+        candidates = {
+            beta - 1,
+            beta,
+            beta + 1,
+        }
+
+        # Exponents must be positive.
+        candidates = {
+            exponent
+            for exponent in candidates
+            if exponent >= 1
+        }
+
+        if possible is None:
+            possible = candidates
+        else:
+            possible &= candidates
+
+        # Once the intersection is empty, no exponent is possible.
+        if not possible:
+            return []
+
+    return sorted(possible)
 
 
 def search_superabundant(N):
@@ -105,112 +205,218 @@ def search_superabundant(N):
     Return the sorted list of (n, sigma(n)) pairs for every superabundant
     number n <= N.
 
-    We first enumerate every candidate n <= N of the form
-    2^a1 * 3^a2 * 5^a3 * ... with a1 >= a2 >= a3 >= ... >= 1 (Theorem 1
-    guarantees every superabundant number is among these candidates).
-    While doing so, we drop candidates whose most recently placed
-    (i.e. largest) prime exponent exceeds 1, unless the candidate is 4 or
-    36 (Theorem 3 guarantees no other such candidate can be superabundant,
-    so this is a safe reduction, not just a heuristic).
+    Candidate generation uses:
 
-    Finally we sort the surviving candidates by n and scan them in order,
-    keeping only the ones whose ratio sigma(n)/n strictly improves on the
-    best ratio seen so far. The ratio comparison is done by cross
-    multiplication of exact integers, never floating point, so there is
-    no risk of rounding errors even for very large n.
+    1. Theorem 1:
+       Prime factors are consecutive and exponents are non-increasing.
+
+    2. Theorem 2:
+       For every new prime r, its exponent is restricted by every
+       previously selected prime q < r. The resulting candidate sets
+       are intersected.
+
+    3. Theorem 3:
+       A candidate whose largest prime factor has exponent greater than 1
+       cannot itself be superabundant, except for 4 and 36.
+
+    Theorem 3 does not terminate recursion from a rejected candidate,
+    because a later prime factor may restore the condition that the
+    largest prime has exponent 1.
+
+    The final list is obtained by sorting candidates by n and retaining
+    exactly those for which sigma(n)/n is a new record.
     """
     primes = enough_primes(N)
-    candidates = [(1, 1)]  # n = 1 is trivially superabundant
 
-    def recurse(idx, max_exp, n, sigma):
+    # n = 1 is superabundant by definition.
+    candidates = [(1, 1)]
+
+    def recurse(idx, exponents, n, sigma):
+        """
+        Add primes[idx], primes[idx + 1], ... recursively.
+
+        `exponents` contains the exponents of all previously selected
+        primes.
+        """
         if idx >= len(primes):
             return
-        p = primes[idx]
-        power = 1  # will hold p**exp, built up incrementally
-        term = 1   # will hold 1 + p + p**2 + ... + p**exp
-        for exp in range(1, max_exp + 1):
-            power *= p
-            new_n = n * power
-            if new_n > N:
-                break  # increasing exp only makes new_n larger; stop here
-            term += power
-            new_sigma = sigma * term  # sigma is multiplicative, p is a new prime factor
 
-            # Theorem 3 filter: this candidate's largest prime factor is p,
-            # with exponent 'exp'. Keep it only if exp == 1, or if it is
-            # one of the two known exceptions (4 and 36).
+        p = primes[idx]
+
+        # Theorem 2:
+        # Apply it to every previously selected prime q < p.
+        candidate_exps = theorem2_exponent_candidates(
+            exponents,
+            primes,
+            idx,
+        )
+
+        if not candidate_exps:
+            return
+
+        # Theorem 1:
+        # Exponents must be non-increasing.
+        max_exp = exponents[-1]
+
+        candidate_exps = [
+            exp
+            for exp in candidate_exps
+            if exp <= max_exp
+        ]
+
+        for exp in candidate_exps:
+            power = p ** exp
+            new_n = n * power
+
+            if new_n > N:
+                continue
+
+            # sigma(p^exp) = 1 + p + ... + p^exp
+            term = (power * p - 1) // (p - 1)
+
+            # sigma is multiplicative because p is a new prime factor.
+            new_sigma = sigma * term
+
+            new_exponents = exponents + [exp]
+
+            # Theorem 3:
+            # The current largest prime p must have exponent 1,
+            # except for n = 4 and n = 36.
+            #
+            # This determines whether the current candidate itself
+            # can be superabundant. We nevertheless continue recursion
+            # regardless of this test.
             if exp == 1 or new_n in (4, 36):
                 candidates.append((new_n, new_sigma))
 
-            # Continue the search regardless of the filter above: a later,
-            # smaller exponent on a further prime may still yield a
-            # genuinely new superabundant number.
-            recurse(idx + 1, exp, new_n, new_sigma)
+            recurse(
+                idx + 1,
+                new_exponents,
+                new_n,
+                new_sigma,
+            )
 
-    initial_max_exp = N.bit_length()  # a safe upper bound: 2**k <= N needs k <= log2(N)
-    recurse(0, initial_max_exp, 1, 1)
+    # Choose the exponent of 2 first.
+    #
+    # Theorem 2 requires a previously selected smaller prime q.
+    # Therefore, once the exponent of 2 is chosen, every subsequent
+    # prime can be constrained by Theorem 2.
+    initial_max_exp = N.bit_length()
 
-    candidates.sort()
+    for first_exp in range(1, initial_max_exp + 1):
+        n = 2 ** first_exp
+
+        if n > N:
+            break
+
+        sigma = 2 ** (first_exp + 1) - 1
+
+        # For n = 2^a, Theorem 3 says that only a = 1 is superabundant,
+        # except for n = 4.
+        if first_exp == 1 or n in (4, 36):
+            candidates.append((n, sigma))
+
+        recurse(
+            idx=1,
+            exponents=[first_exp],
+            n=n,
+            sigma=sigma,
+        )
+
+    # Multiple recursion paths should not normally produce the same n,
+    # but using a set here makes the final stage robust.
+    candidates = sorted(set(candidates))
 
     result = []
-    best_n, best_sigma = None, None
+
+    best_n = None
+    best_sigma = None
+
     for n, sigma in candidates:
-        if best_n is None or sigma * best_n > best_sigma * n:
+        if (
+            best_n is None
+            or sigma * best_n > best_sigma * n
+        ):
             result.append((n, sigma))
-            best_n, best_sigma = n, sigma
+            best_n = n
+            best_sigma = sigma
+
     return result
 
 
 def factorize_with_known_primes(n, primes):
     """
-    Factor n using trial division against a known, sufficient list of
-    primes. This is only ever called on the small final list of
-    superabundant numbers, so a simple trial division is fast enough
-    even though n itself may be very large.
+    Factor n using trial division against a known sufficient list of primes.
+
+    This is called only for the final list of superabundant numbers.
     """
     factors = []
+
     for p in primes:
         if p * p > n:
             break
+
         if n % p == 0:
             exp = 0
+
             while n % p == 0:
                 n //= p
                 exp += 1
+
             factors.append((p, exp))
+
     if n > 1:
         factors.append((n, 1))
+
     return factors
 
 
 def format_factorization(n, primes):
-    """Format n as '2^a * 3^b * ...', matching the style used in the search log."""
+    """Format n as '2^a * 3^b * ...'."""
     if n == 1:
         return "1"
+
     factors = factorize_with_known_primes(n, primes)
-    parts = [f"{p}^{e}" if e > 1 else f"{p}" for p, e in factors]
+
+    parts = [
+        f"{p}^{e}" if e > 1 else f"{p}"
+        for p, e in factors
+    ]
+
     return " * ".join(parts)
 
 
 def main():
     p = int(sys.argv[1]) if len(sys.argv) > 1 else 16
+
     if p < 1:
         raise ValueError("p must be a positive integer.")
 
     N = 10 ** p
-    print(f"Searching for superabundant numbers up to 10^{p} = {N}")
+
+    print(
+        f"Searching for superabundant numbers up to "
+        f"10^{p} = {N}"
+    )
     print()
 
     results = search_superabundant(N)
-    primes = enough_primes(N)  # reused here only for printing factorizations
+    primes = enough_primes(N)
 
     for n, sigma in results:
         ratio = sigma / n
         factorization = format_factorization(n, primes)
-        print(f"{n} = {factorization}   (sigma/n = {sigma}/{n} = {ratio})")
+
+        print(
+            f"{n} = {factorization}   "
+            f"(sigma/n = {sigma}/{n} = {ratio})"
+        )
 
     print()
-    print(f"Found {len(results)} superabundant numbers up to 10^{p}.")
+    print(
+        f"Found {len(results)} superabundant numbers "
+        f"up to 10^{p}."
+    )
 
 
 if __name__ == "__main__":
