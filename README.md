@@ -295,7 +295,10 @@ The implementation is therefore intended primarily as a computational exploratio
 
 ## Result
 
-Result for calculating up to 10^100 is saved at `result-100.txt`.
+Result for calculatins up to 10^100 and 10^200 are saved at:
+
+* result-100.txt
+* result-200.txt
 
 ## Reference
 
